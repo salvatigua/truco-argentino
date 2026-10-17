@@ -1,0 +1,40 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Usuario {
+  id               String    @id @default(uuid())
+  nombre           String    @unique
+  avatar           String    @default("gaucho") // 'gaucho' | 'paisana' | 'mate' | 'sol'
+  ultimoJuegoEn    DateTime  @default(now())
+  creadoEn         DateTime  @default(now())
+
+  // Métricas acumuladas directas
+  partidasJugadas  Int       @default(0)
+  partidasGanadas  Int       @default(0)
+  envidosQueridos  Int       @default(0)
+  envidosGanados   Int       @default(0)
+  trucosQueridos   Int       @default(0)
+  trucosGanados    Int       @default(0)
+
+  // Relación con el historial
+  partidas         Partida[]
+}
+
+model Partida {
+  id             String   @id @default(uuid())
+  usuarioId      String
+  usuario        Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  
+  resultado      String   // 'VICTORIA' | 'DERROTA'
+  puntosUsuario  Int
+  puntosCpu      Int
+  targetPuntos   Int      // 12, 15, 24, 30
+  conFlor        Boolean  @default(false)
+  creadoEn       DateTime @default(now())
+}

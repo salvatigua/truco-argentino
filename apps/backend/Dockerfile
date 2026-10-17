@@ -1,5 +1,8 @@
 FROM node:20-alpine
 
+# Instalar OpenSSL necesario para Prisma en Alpine Linux
+RUN apk add --no-cache openssl
+
 WORKDIR /app
 
 # Copiar el paquete compartido
@@ -10,8 +13,11 @@ COPY apps/backend ./apps/backend
 
 WORKDIR /app/apps/backend
 
-# Instalar dependencias dentro de la carpeta del backend
+# Instalar dependencias
 RUN npm install
+
+# Generar el cliente de Prisma
+RUN npx prisma generate
 
 EXPOSE 3000
 

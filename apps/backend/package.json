@@ -1,6 +1,7 @@
 {
   "name": "@truco/backend",
   "version": "1.0.0",
+  "type": "module",
   "description": "API REST y motor para el juego de Truco Argentino",
   "main": "src/index.ts",
   "scripts": {
