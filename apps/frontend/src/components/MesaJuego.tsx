@@ -3,13 +3,13 @@ import {
   Carta,
   crearMazo,
   calcularEnvido,
-  calcularFlor,
   procesarCantoEnvido,
   TipoCanto,
   EstadoCantoEnvido,
   EstadoCantoTruco,
   PuntosTotales,
 } from '@truco/shared';
+import { Usuario } from './Perfil';
 
 interface BazaEstructurada {
   jugador?: Carta;
@@ -17,7 +17,11 @@ interface BazaEstructurada {
   ganador?: 'jugador' | 'cpu' | 'empate';
 }
 
-export const MesaJuego: React.FC = () => {
+interface Props {
+  usuarioActivo: Usuario | null;
+}
+
+export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
   const [targetPuntos] = useState<PuntosTotales>(30);
   const [puntosJugador, setPuntosJugador] = useState(0);
   const [puntosCpu, setPuntosCpu] = useState(0);
@@ -50,10 +54,77 @@ export const MesaJuego: React.FC = () => {
   const [turnoActual, setTurnoActual] = useState<'jugador' | 'cpu'>('jugador');
   const [cpuPensando, setCpuPensando] = useState(false);
   const [mensajeEstado, setMensajeEstado] = useState('¡Presiona "Repartir" para empezar!');
-  const [manoTerminada, setManoTerminada] = useState(false);
+  const [manoTerminada, setManoTerminada] = useState(true); // Inicia true para obligar a repartir la 1a mano
+  const [partidaFinalizada, setPartidaFinalizada] = useState(false);
+
+  // Métricas acumuladas para la partida
+  const [envidosQueridos, setEnvidosQueridos] = useState(0);
+  const [envidosGanados, setEnvidosGanados] = useState(0);
+  const [trucosQueridos, setTrucosQueridos] = useState(0);
+  const [trucosGanados, setTrucosGanados] = useState(0);
+
+  // Registrar partida en la API al llegar al target
+  const guardarPartidaEnApi = async (ptsJ: number, ptsC: number) => {
+    if (!usuarioActivo || partidaFinalizada) return;
+
+    const esVictoria = ptsJ >= targetPuntos;
+    setPartidaFinalizada(true);
+
+    try {
+      await fetch(`http://localhost:3000/api/usuarios/${usuarioActivo.id}/partidas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resultado: esVictoria ? 'VICTORIA' : 'DERROTA',
+          puntosUsuario: ptsJ,
+          puntosCpu: ptsC,
+          targetPuntos,
+          conFlor: false,
+          envidosQueridos,
+          envidosGanados,
+          trucosQueridos,
+          trucosGanados,
+        }),
+      });
+    } catch (e) {
+      console.error('Error al guardar la partida:', e);
+    }
+  };
+
+  // Sumar puntos e invocar verificación de fin de partida
+  const sumarPuntos = (jugador: 'jugador' | 'cpu', cantidad: number) => {
+    if (jugador === 'jugador') {
+      const nuevoPuntaje = puntosJugador + cantidad;
+      setPuntosJugador(nuevoPuntaje);
+      if (nuevoPuntaje >= targetPuntos) {
+        setMensajeEstado(`🏆 ¡GANASTE LA PARTIDA! (${nuevoPuntaje} pts)`);
+        setManoTerminada(true);
+        guardarPartidaEnApi(nuevoPuntaje, puntosCpu);
+      }
+    } else {
+      const nuevoPuntaje = puntosCpu + cantidad;
+      setPuntosCpu(nuevoPuntaje);
+      if (nuevoPuntaje >= targetPuntos) {
+        setMensajeEstado(`💀 La CPU ganó la partida (${nuevoPuntaje} pts).`);
+        setManoTerminada(true);
+        guardarPartidaEnApi(puntosJugador, nuevoPuntaje);
+      }
+    }
+  };
 
   // 1. Repartir Nueva Mano
   const repartir = () => {
+    if (partidaFinalizada) {
+      // Reiniciar marcador completo para una nueva partida
+      setPuntosJugador(0);
+      setPuntosCpu(0);
+      setPartidaFinalizada(false);
+      setEnvidosQueridos(0);
+      setEnvidosGanados(0);
+      setTrucosQueridos(0);
+      setTrucosGanados(0);
+    }
+
     const mazo = crearMazo().sort(() => Math.random() - 0.5);
     const jCartas = mazo.slice(0, 3);
     const cpuCartas = mazo.slice(3, 6);
@@ -67,7 +138,7 @@ export const MesaJuego: React.FC = () => {
     setBazaActualIdx(0);
     setManoTerminada(false);
 
-    // Resetear apuestas
+    // Resetear apuestas de la mano
     setEstadoEnvido('NADIE');
     setPtsEnvidoEnJuego(0);
     setPtsEnvidoRechazo(1);
@@ -87,7 +158,7 @@ export const MesaJuego: React.FC = () => {
 
   // 2. Activar la CPU cuando le toca jugar o responder
   useEffect(() => {
-    if (cpuPensando || manoTerminada) return;
+    if (cpuPensando || manoTerminada || partidaFinalizada) return;
 
     if (quienDebeResponder === 'cpu' && apuestaPendiente) {
       responderCpuApuesta();
@@ -97,7 +168,7 @@ export const MesaJuego: React.FC = () => {
         ejecutarTurnoCpu(manoCpu, bazas, bazaActualIdx);
       }
     }
-  }, [turnoActual, quienDebeResponder, apuestaPendiente, bazaActualIdx, manoTerminada]);
+  }, [turnoActual, quienDebeResponder, apuestaPendiente, bazaActualIdx, manoTerminada, partidaFinalizada]);
 
   // 3. Respuesta simulada de la CPU a los cantos
   const responderCpuApuesta = () => {
@@ -112,10 +183,9 @@ export const MesaJuego: React.FC = () => {
         apuestaPendiente === 'REAL_ENVIDO' ||
         apuestaPendiente === 'FALTA_ENVIDO'
       ) {
+        setEnvidosQueridos((v) => v + 1);
+
         if (acepta) {
-          setMensajeEstado(
-            `🤖 CPU dice: "¡Quiero!" (CPU tiene ${envidoCpu} de Envido vs tus ${envidoJugador}).`
-          );
           setEnvidoResuelto(true);
           setApuestaPendiente(null);
           setQuienDebeResponder(null);
@@ -124,19 +194,21 @@ export const MesaJuego: React.FC = () => {
             envidoJugador > envidoCpu ||
             (envidoJugador === envidoCpu && manoActual === 'jugador')
           ) {
-            setPuntosJugador((p) => p + ptsEnvidoEnJuego);
+            setEnvidosGanados((v) => v + 1);
             setMensajeEstado(
               `🎉 Ganaste el Envido (+${ptsEnvidoEnJuego} pts). Tu ${envidoJugador} le gana a ${envidoCpu}.`
             );
+            sumarPuntos('jugador', ptsEnvidoEnJuego);
           } else {
-            setPuntosCpu((p) => p + ptsEnvidoEnJuego);
             setMensajeEstado(
               `🤖 CPU gana el Envido (+${ptsEnvidoEnJuego} pts). Su ${envidoCpu} le gana a tu ${envidoJugador}.`
             );
+            sumarPuntos('cpu', ptsEnvidoEnJuego);
           }
         } else {
           setMensajeEstado(`🤖 CPU dice: "No Quiero". (+${ptsEnvidoRechazo} pt para ti).`);
-          setPuntosJugador((p) => p + ptsEnvidoRechazo);
+          setEnvidosGanados((v) => v + 1);
+          sumarPuntos('jugador', ptsEnvidoRechazo);
           setEnvidoResuelto(true);
           setApuestaPendiente(null);
           setQuienDebeResponder(null);
@@ -146,6 +218,8 @@ export const MesaJuego: React.FC = () => {
         apuestaPendiente === 'RETRUCO' ||
         apuestaPendiente === 'VALE_CUATRO'
       ) {
+        setTrucosQueridos((v) => v + 1);
+
         if (acepta) {
           setMensajeEstado(`🤖 CPU dice: "¡Quiero!" al ${apuestaPendiente}.`);
           setPtsTrucoEnJuego(
@@ -154,10 +228,11 @@ export const MesaJuego: React.FC = () => {
           setApuestaPendiente(null);
           setQuienDebeResponder(null);
         } else {
+          setTrucosGanados((v) => v + 1);
           setMensajeEstado(
             `🤖 CPU dice: "No Quiero". Ganaste la mano (+${ptsTrucoEnJuego} pt).`
           );
-          setPuntosJugador((p) => p + ptsTrucoEnJuego);
+          sumarPuntos('jugador', ptsTrucoEnJuego);
           setManoTerminada(true);
           setApuestaPendiente(null);
           setQuienDebeResponder(null);
@@ -168,7 +243,7 @@ export const MesaJuego: React.FC = () => {
 
   // 4. Cantar por parte del Jugador
   const cantarJugador = (canto: TipoCanto) => {
-    if (cpuPensando || manoTerminada) return;
+    if (cpuPensando || manoTerminada || partidaFinalizada) return;
 
     if (canto === 'ENVIDO' || canto === 'REAL_ENVIDO' || canto === 'FALTA_ENVIDO') {
       const res = procesarCantoEnvido(
@@ -195,7 +270,7 @@ export const MesaJuego: React.FC = () => {
       setCantanteTruco('jugador');
       setApuestaPendiente('RETRUCO');
       setQuienDebeResponder('cpu');
-      setMensajeEstado('Cantaste RE TRUCO! Esperando respuesta...');
+      setMensajeEstado('Cantaste RETRUCO! Esperando respuesta...');
     } else if (canto === 'VALE_CUATRO') {
       setEstadoTruco('VALE_CUATRO');
       setCantanteTruco('jugador');
@@ -204,7 +279,7 @@ export const MesaJuego: React.FC = () => {
       setMensajeEstado('Cantaste VALE CUATRO! Esperando respuesta...');
     } else if (canto === 'MAZO') {
       setMensajeEstado(`Te fuiste al mazo. CPU suma +${ptsTrucoEnJuego} pt.`);
-      setPuntosCpu((p) => p + ptsTrucoEnJuego);
+      sumarPuntos('cpu', ptsTrucoEnJuego);
       setManoTerminada(true);
     }
   };
@@ -235,11 +310,12 @@ export const MesaJuego: React.FC = () => {
     if (ganadorMano) {
       setManoTerminada(true);
       if (ganadorMano === 'jugador') {
-        setPuntosJugador((p) => p + ptsTrucoEnJuego);
+        if (estadoTruco !== 'NADIE') setTrucosGanados((v) => v + 1);
         setMensajeEstado(`🎉 ¡Ganaste la mano! (+${ptsTrucoEnJuego} pts)`);
+        sumarPuntos('jugador', ptsTrucoEnJuego);
       } else {
-        setPuntosCpu((p) => p + ptsTrucoEnJuego);
         setMensajeEstado(`🤖 CPU ganó la mano. (+${ptsTrucoEnJuego} pts CPU)`);
+        sumarPuntos('cpu', ptsTrucoEnJuego);
       }
       return true;
     }
@@ -251,7 +327,8 @@ export const MesaJuego: React.FC = () => {
       turnoActual !== 'jugador' ||
       cpuPensando ||
       manoTerminada ||
-      quienDebeResponder !== null
+      quienDebeResponder !== null ||
+      partidaFinalizada
     )
       return;
 
@@ -275,7 +352,7 @@ export const MesaJuego: React.FC = () => {
     bazasEstado: BazaEstructurada[],
     bazaIdx: number
   ) => {
-    if (cartasCpuActuales.length === 0 || manoTerminada) return;
+    if (cartasCpuActuales.length === 0 || manoTerminada || partidaFinalizada) return;
 
     setCpuPensando(true);
     setTimeout(() => {
@@ -333,7 +410,9 @@ export const MesaJuego: React.FC = () => {
       {/* Marcador */}
       <div className="flex justify-between items-center bg-slate-800 p-3 rounded-xl border border-slate-700 shadow">
         <div className="text-center">
-          <p className="text-xs text-slate-400 font-semibold">TÚ</p>
+          <p className="text-xs text-slate-400 font-semibold truncate max-w-[80px]">
+            {usuarioActivo ? usuarioActivo.nombre : 'TÚ'}
+          </p>
           <p className="text-2xl font-black text-emerald-400">{puntosJugador} pts</p>
         </div>
         <div className="text-center">
@@ -410,7 +489,8 @@ export const MesaJuego: React.FC = () => {
                 turnoActual !== 'jugador' ||
                 cpuPensando ||
                 manoTerminada ||
-                quienDebeResponder !== null
+                quienDebeResponder !== null ||
+                partidaFinalizada
               }
               className="flex-1 bg-slate-800 hover:bg-slate-700 active:scale-95 disabled:opacity-40 p-2.5 rounded-xl border-2 border-slate-600 flex flex-col items-center shadow transition-all"
             >
@@ -430,7 +510,8 @@ export const MesaJuego: React.FC = () => {
               envidoResuelto ||
               cpuPensando ||
               manoTerminada ||
-              quienDebeResponder !== null
+              quienDebeResponder !== null ||
+              partidaFinalizada
             }
             className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
           >
@@ -452,21 +533,22 @@ export const MesaJuego: React.FC = () => {
               cpuPensando ||
               manoTerminada ||
               cantanteTruco === 'jugador' ||
-              quienDebeResponder !== null
+              quienDebeResponder !== null ||
+              partidaFinalizada
             }
             className="bg-amber-600 hover:bg-amber-500 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
           >
             {estadoTruco === 'NADIE'
               ? 'Truco'
               : estadoTruco === 'TRUCO'
-              ? 'Re Truco'
+              ? 'Retruco'
               : 'Vale Cuatro'}
           </button>
 
           {/* Botón Mazo */}
           <button
             onClick={() => cantarJugador('MAZO')}
-            disabled={cpuPensando || manoTerminada}
+            disabled={cpuPensando || manoTerminada || partidaFinalizada}
             className="bg-rose-700 hover:bg-rose-600 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
           >
             Mazo
@@ -477,10 +559,10 @@ export const MesaJuego: React.FC = () => {
         <div className="mt-2">
           <button
             onClick={repartir}
-            disabled={cpuPensando}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 font-bold py-2 rounded-lg text-xs active:scale-95 transition-all shadow"
+            disabled={cpuPensando || !manoTerminada}
+            className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 font-bold py-2 rounded-lg text-xs active:scale-95 transition-all shadow"
           >
-            🔄 Repartir Nueva Mano
+            {partidaFinalizada ? '🎮 Nueva Partida' : '🔄 Repartir Nueva Mano'}
           </button>
         </div>
       </div>

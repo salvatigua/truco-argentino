@@ -46,7 +46,7 @@ export default function App() {
       </div>
 
       {/* Render de Vistas */}
-      {vista === 'mesa' && <MesaJuego />}
+      {vista === 'mesa' && <MesaJuego usuarioActivo={usuarioActivo} />}
       {vista === 'anotador' && <Anotador />}
       {vista === 'perfil' && (
         <Perfil
