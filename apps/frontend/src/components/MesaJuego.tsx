@@ -19,9 +19,10 @@ interface BazaEstructurada {
 
 interface Props {
   usuarioActivo: Usuario | null;
+  onUsuarioActualizado?: (id: string) => void;
 }
 
-export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
+export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado }) => {
   const [targetPuntos] = useState<PuntosTotales>(30);
   const [puntosJugador, setPuntosJugador] = useState(0);
   const [puntosCpu, setPuntosCpu] = useState(0);
@@ -36,7 +37,7 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
   const [bazas, setBazas] = useState<BazaEstructurada[]>([{}, {}, {}]);
   const [bazaActualIdx, setBazaActualIdx] = useState<number>(0);
 
-  // Estados de Apuestas
+  // Apuestas
   const [estadoEnvido, setEstadoEnvido] = useState<EstadoCantoEnvido>('NADIE');
   const [ptsEnvidoEnJuego, setPtsEnvidoEnJuego] = useState(0);
   const [ptsEnvidoRechazo, setPtsEnvidoRechazo] = useState(1);
@@ -53,22 +54,156 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
   const [manoActual, setManoActual] = useState<'jugador' | 'cpu'>('jugador');
   const [turnoActual, setTurnoActual] = useState<'jugador' | 'cpu'>('jugador');
   const [cpuPensando, setCpuPensando] = useState(false);
-  const [mensajeEstado, setMensajeEstado] = useState('¡Presiona "Repartir" para empezar!');
-  const [manoTerminada, setManoTerminada] = useState(true); // Inicia true para obligar a repartir la 1a mano
+  const [mensajeEstado, setMensajeEstado] = useState('Presiona "Iniciar Partida" para comenzar.');
+  const [manoTerminada, setManoTerminada] = useState(true);
   const [partidaFinalizada, setPartidaFinalizada] = useState(false);
+  const [partidaIniciada, setPartidaIniciada] = useState(false);
 
-  // Métricas acumuladas para la partida
+  // Métricas
   const [envidosQueridos, setEnvidosQueridos] = useState(0);
   const [envidosGanados, setEnvidosGanados] = useState(0);
   const [trucosQueridos, setTrucosQueridos] = useState(0);
   const [trucosGanados, setTrucosGanados] = useState(0);
 
-  // Registrar partida en la API al llegar al target
+  const [partidaGuardadaDetectada, setPartidaGuardadaDetectada] = useState<any | null>(null);
+
+  const STORAGE_KEY = usuarioActivo
+    ? `truco_partida_pendiente_${usuarioActivo.id}`
+    : `truco_partida_pendiente_guest`;
+
+  // 1. Verificar si existe partida realmente guardada (solo si hubo reparto previo)
+  useEffect(() => {
+    const dataGuardada = localStorage.getItem(STORAGE_KEY);
+    if (dataGuardada) {
+      try {
+        const parsed = JSON.parse(dataGuardada);
+        if (parsed.partidaIniciada && parsed.manoJugador && parsed.manoJugador.length > 0) {
+          setPartidaGuardadaDetectada(parsed);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    }
+  }, [STORAGE_KEY]);
+
+  // 2. Guardar en localStorage únicamente cuando la partida se inició y hay cartas repartidas
+  useEffect(() => {
+    if (partidaFinalizada || !partidaIniciada || manoJugador.length === 0) {
+      return;
+    }
+
+    const estadoPartida = {
+      puntosJugador,
+      puntosCpu,
+      manoJugador,
+      manoCpu,
+      envidoJugador,
+      envidoCpu,
+      bazas,
+      bazaActualIdx,
+      estadoEnvido,
+      ptsEnvidoEnJuego,
+      ptsEnvidoRechazo,
+      envidoResuelto,
+      estadoTruco,
+      ptsTrucoEnJuego,
+      cantanteTruco,
+      manoActual,
+      turnoActual,
+      manoTerminada,
+      partidaIniciada: true,
+      envidosQueridos,
+      envidosGanados,
+      trucosQueridos,
+      trucosGanados,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(estadoPartida));
+  }, [
+    puntosJugador,
+    puntosCpu,
+    manoJugador,
+    bazas,
+    manoTerminada,
+    STORAGE_KEY,
+    partidaFinalizada,
+    partidaIniciada,
+  ]);
+
+  const reanudarPartidaGuardada = () => {
+    if (!partidaGuardadaDetectada) return;
+
+    setPuntosJugador(partidaGuardadaDetectada.puntosJugador);
+    setPuntosCpu(partidaGuardadaDetectada.puntosCpu);
+    setManoJugador(partidaGuardadaDetectada.manoJugador);
+    setManoCpu(partidaGuardadaDetectada.manoCpu);
+    setEnvidoJugador(partidaGuardadaDetectada.envidoJugador);
+    setEnvidoCpu(partidaGuardadaDetectada.envidoCpu);
+    setBazas(partidaGuardadaDetectada.bazas);
+    setBazaActualIdx(partidaGuardadaDetectada.bazaActualIdx);
+    setEstadoEnvido(partidaGuardadaDetectada.estadoEnvido);
+    setPtsEnvidoEnJuego(partidaGuardadaDetectada.ptsEnvidoEnJuego);
+    setPtsEnvidoRechazo(partidaGuardadaDetectada.ptsEnvidoRechazo);
+    setEnvidoResuelto(partidaGuardadaDetectada.envidoResuelto);
+    setEstadoTruco(partidaGuardadaDetectada.estadoTruco);
+    setPtsTrucoEnJuego(partidaGuardadaDetectada.ptsTrucoEnJuego);
+    setCantanteTruco(partidaGuardadaDetectada.cantanteTruco);
+    setManoActual(partidaGuardadaDetectada.manoActual);
+    setTurnoActual(partidaGuardadaDetectada.turnoActual);
+    setManoTerminada(partidaGuardadaDetectada.manoTerminada);
+    setPartidaIniciada(true);
+
+    setPartidaGuardadaDetectada(null);
+    setMensajeEstado('▶️ Partida reanudada.');
+  };
+
+  const abandonarPartidaGuardada = async () => {
+    localStorage.removeItem(STORAGE_KEY);
+
+    if (usuarioActivo && partidaGuardadaDetectada) {
+      try {
+        await fetch(`http://localhost:3000/api/usuarios/${usuarioActivo.id}/partidas`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            resultado: 'DERROTA',
+            puntosUsuario: partidaGuardadaDetectada.puntosJugador,
+            puntosCpu: partidaGuardadaDetectada.puntosCpu,
+            targetPuntos,
+            conFlor: false,
+            envidosQueridos: partidaGuardadaDetectada.envidosQueridos,
+            envidosGanados: partidaGuardadaDetectada.envidosGanados,
+            trucosQueridos: partidaGuardadaDetectada.trucosQueridos,
+            trucosGanados: partidaGuardadaDetectada.trucosGanados,
+          }),
+        });
+
+        if (onUsuarioActualizado) {
+          onUsuarioActualizado(usuarioActivo.id);
+        }
+      } catch (e) {
+        console.error('Error al registrar abandono:', e);
+      }
+    }
+
+    setPartidaGuardadaDetectada(null);
+    setPuntosJugador(0);
+    setPuntosCpu(0);
+    setManoJugador([]);
+    setManoCpu([]);
+    setBazas([{}, {}, {}]);
+    setPartidaIniciada(false);
+    setManoTerminada(true);
+    setMensajeEstado('Partida abandonada (registrada como derrota). Presiona "Iniciar Partida".');
+  };
+
   const guardarPartidaEnApi = async (ptsJ: number, ptsC: number) => {
     if (!usuarioActivo || partidaFinalizada) return;
 
     const esVictoria = ptsJ >= targetPuntos;
     setPartidaFinalizada(true);
+    localStorage.removeItem(STORAGE_KEY);
 
     try {
       await fetch(`http://localhost:3000/api/usuarios/${usuarioActivo.id}/partidas`, {
@@ -86,12 +221,15 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
           trucosGanados,
         }),
       });
+
+      if (onUsuarioActualizado) {
+        onUsuarioActualizado(usuarioActivo.id);
+      }
     } catch (e) {
       console.error('Error al guardar la partida:', e);
     }
   };
 
-  // Sumar puntos e invocar verificación de fin de partida
   const sumarPuntos = (jugador: 'jugador' | 'cpu', cantidad: number) => {
     if (jugador === 'jugador') {
       const nuevoPuntaje = puntosJugador + cantidad;
@@ -112,13 +250,12 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
     }
   };
 
-  // 1. Repartir Nueva Mano
   const repartir = () => {
-    if (partidaFinalizada) {
-      // Reiniciar marcador completo para una nueva partida
+    if (!partidaIniciada || partidaFinalizada) {
       setPuntosJugador(0);
       setPuntosCpu(0);
       setPartidaFinalizada(false);
+      setPartidaIniciada(true);
       setEnvidosQueridos(0);
       setEnvidosGanados(0);
       setTrucosQueridos(0);
@@ -138,7 +275,6 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
     setBazaActualIdx(0);
     setManoTerminada(false);
 
-    // Resetear apuestas de la mano
     setEstadoEnvido('NADIE');
     setPtsEnvidoEnJuego(0);
     setPtsEnvidoRechazo(1);
@@ -156,9 +292,15 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
     setMensajeEstado(`Mano repartida. Es mano: ${siguienteMano === 'jugador' ? 'Tú' : 'CPU'}.`);
   };
 
-  // 2. Activar la CPU cuando le toca jugar o responder
   useEffect(() => {
-    if (cpuPensando || manoTerminada || partidaFinalizada) return;
+    if (
+      cpuPensando ||
+      manoTerminada ||
+      partidaFinalizada ||
+      partidaGuardadaDetectada ||
+      !partidaIniciada
+    )
+      return;
 
     if (quienDebeResponder === 'cpu' && apuestaPendiente) {
       responderCpuApuesta();
@@ -168,9 +310,17 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
         ejecutarTurnoCpu(manoCpu, bazas, bazaActualIdx);
       }
     }
-  }, [turnoActual, quienDebeResponder, apuestaPendiente, bazaActualIdx, manoTerminada, partidaFinalizada]);
+  }, [
+    turnoActual,
+    quienDebeResponder,
+    apuestaPendiente,
+    bazaActualIdx,
+    manoTerminada,
+    partidaFinalizada,
+    partidaGuardadaDetectada,
+    partidaIniciada,
+  ]);
 
-  // 3. Respuesta simulada de la CPU a los cantos
   const responderCpuApuesta = () => {
     setCpuPensando(true);
     setTimeout(() => {
@@ -241,9 +391,8 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
     }, 1300);
   };
 
-  // 4. Cantar por parte del Jugador
   const cantarJugador = (canto: TipoCanto) => {
-    if (cpuPensando || manoTerminada || partidaFinalizada) return;
+    if (cpuPensando || manoTerminada || partidaFinalizada || partidaGuardadaDetectada) return;
 
     if (canto === 'ENVIDO' || canto === 'REAL_ENVIDO' || canto === 'FALTA_ENVIDO') {
       const res = procesarCantoEnvido(
@@ -284,7 +433,6 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
     }
   };
 
-  // 5. Comparación y ejecución de Bazas
   const evaluarBaza = (cJugador: Carta, cCpu: Carta): 'jugador' | 'cpu' | 'empate' => {
     if (cJugador.jerarquia > cCpu.jerarquia) return 'jugador';
     if (cCpu.jerarquia > cJugador.jerarquia) return 'cpu';
@@ -328,7 +476,9 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
       cpuPensando ||
       manoTerminada ||
       quienDebeResponder !== null ||
-      partidaFinalizada
+      partidaFinalizada ||
+      partidaGuardadaDetectada ||
+      !partidaIniciada
     )
       return;
 
@@ -406,7 +556,33 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
   };
 
   return (
-    <div className="max-w-md mx-auto p-4 bg-slate-900 min-h-screen text-slate-100 flex flex-col justify-between select-none">
+    <div className="max-w-md mx-auto p-4 bg-slate-900 min-h-screen text-slate-100 flex flex-col justify-between select-none relative">
+      {partidaGuardadaDetectada && (
+        <div className="absolute inset-0 bg-slate-950/90 z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-800 border-2 border-amber-500/60 p-5 rounded-2xl text-center shadow-2xl max-w-xs w-full">
+            <span className="text-4xl block mb-2">🃏</span>
+            <h2 className="text-lg font-black text-amber-400 mb-1">Partida en Curso</h2>
+            <p className="text-xs text-slate-300 mb-4">
+              Tenés una partida sin terminar ({partidaGuardadaDetectada.puntosJugador} pts vs CPU {partidaGuardadaDetectada.puntosCpu} pts).
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={reanudarPartidaGuardada}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all shadow"
+              >
+                ▶️ Reanudar Partida
+              </button>
+              <button
+                onClick={abandonarPartidaGuardada}
+                className="bg-rose-800/80 hover:bg-rose-700 text-rose-200 font-bold py-2 rounded-xl text-xs transition-all"
+              >
+                🚫 Abandonar (Registra Derrota)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Marcador */}
       <div className="flex justify-between items-center bg-slate-800 p-3 rounded-xl border border-slate-700 shadow">
         <div className="text-center">
@@ -490,7 +666,9 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
                 cpuPensando ||
                 manoTerminada ||
                 quienDebeResponder !== null ||
-                partidaFinalizada
+                partidaFinalizada ||
+                partidaGuardadaDetectada ||
+                !partidaIniciada
               }
               className="flex-1 bg-slate-800 hover:bg-slate-700 active:scale-95 disabled:opacity-40 p-2.5 rounded-xl border-2 border-slate-600 flex flex-col items-center shadow transition-all"
             >
@@ -502,7 +680,6 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
 
         {/* Botonera Dinámica de Cantos */}
         <div className="grid grid-cols-3 gap-2">
-          {/* Botón Envido */}
           <button
             onClick={() => cantarJugador('ENVIDO')}
             disabled={
@@ -511,14 +688,15 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
               cpuPensando ||
               manoTerminada ||
               quienDebeResponder !== null ||
-              partidaFinalizada
+              partidaFinalizada ||
+              partidaGuardadaDetectada ||
+              !partidaIniciada
             }
             className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
           >
             Envido
           </button>
 
-          {/* Botón Truco */}
           <button
             onClick={() =>
               cantarJugador(
@@ -534,7 +712,9 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
               manoTerminada ||
               cantanteTruco === 'jugador' ||
               quienDebeResponder !== null ||
-              partidaFinalizada
+              partidaFinalizada ||
+              partidaGuardadaDetectada ||
+              !partidaIniciada
             }
             className="bg-amber-600 hover:bg-amber-500 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
           >
@@ -545,24 +725,33 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo }) => {
               : 'Vale Cuatro'}
           </button>
 
-          {/* Botón Mazo */}
           <button
             onClick={() => cantarJugador('MAZO')}
-            disabled={cpuPensando || manoTerminada || partidaFinalizada}
+            disabled={
+              cpuPensando ||
+              manoTerminada ||
+              partidaFinalizada ||
+              partidaGuardadaDetectada ||
+              !partidaIniciada
+            }
             className="bg-rose-700 hover:bg-rose-600 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
           >
             Mazo
           </button>
         </div>
 
-        {/* Botón de Repartir */}
+        {/* Botón de Iniciar / Repartir */}
         <div className="mt-2">
           <button
             onClick={repartir}
-            disabled={cpuPensando || !manoTerminada}
+            disabled={cpuPensando || (!manoTerminada && partidaIniciada) || partidaGuardadaDetectada}
             className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 font-bold py-2 rounded-lg text-xs active:scale-95 transition-all shadow"
           >
-            {partidaFinalizada ? '🎮 Nueva Partida' : '🔄 Repartir Nueva Mano'}
+            {!partidaIniciada
+              ? '🎮 Iniciar Partida'
+              : partidaFinalizada
+              ? '🎮 Nueva Partida'
+              : '🔄 Repartir Nueva Mano'}
           </button>
         </div>
       </div>

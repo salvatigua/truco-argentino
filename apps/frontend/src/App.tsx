@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Anotador } from './components/Anotador';
 import { MesaJuego } from './components/MesaJuego';
 import { Perfil, Usuario } from './components/Perfil';
@@ -7,9 +7,41 @@ export default function App() {
   const [vista, setVista] = useState<'mesa' | 'anotador' | 'perfil'>('mesa');
   const [usuarioActivo, setUsuarioActivo] = useState<Usuario | null>(null);
 
+  const refrescarUsuarioActivo = async (id: string) => {
+    try {
+      const res = await fetch('http://localhost:3000/api/usuarios');
+      if (res.ok) {
+        const usuarios: Usuario[] = await res.json();
+        const encontrado = usuarios.find((u) => u.id === id);
+        if (encontrado) setUsuarioActivo(encontrado);
+      }
+    } catch (e) {
+      console.error('Error al refrescar usuario:', e);
+    }
+  };
+
+  useEffect(() => {
+    const lastUserId = localStorage.getItem('truco_usuario_activo_id');
+    fetch('http://localhost:3000/api/usuarios')
+      .then((res) => res.json())
+      .then((usuarios: Usuario[]) => {
+        if (usuarios.length > 0) {
+          const encontrado = usuarios.find((u) => u.id === lastUserId);
+          const seleccionado = encontrado || usuarios[0];
+          setUsuarioActivo(seleccionado);
+          localStorage.setItem('truco_usuario_activo_id', seleccionado.id);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSeleccionarUsuario = (u: Usuario) => {
+    setUsuarioActivo(u);
+    localStorage.setItem('truco_usuario_activo_id', u.id);
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Selector de Navegación */}
       <div className="bg-slate-900 border-b border-slate-800 p-2 flex justify-center gap-2 max-w-md mx-auto">
         <button
           onClick={() => setVista('mesa')}
@@ -45,13 +77,17 @@ export default function App() {
         </button>
       </div>
 
-      {/* Render de Vistas */}
-      {vista === 'mesa' && <MesaJuego usuarioActivo={usuarioActivo} />}
+      {vista === 'mesa' && (
+        <MesaJuego
+          usuarioActivo={usuarioActivo}
+          onUsuarioActualizado={(id) => refrescarUsuarioActivo(id)}
+        />
+      )}
       {vista === 'anotador' && <Anotador />}
       {vista === 'perfil' && (
         <Perfil
           usuarioActivo={usuarioActivo}
-          onSeleccionarUsuario={(u) => setUsuarioActivo(u)}
+          onSeleccionarUsuario={handleSeleccionarUsuario}
         />
       )}
     </div>
