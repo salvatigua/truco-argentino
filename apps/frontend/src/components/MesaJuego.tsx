@@ -49,6 +49,7 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
 
   const [apuestaPendiente, setApuestaPendiente] = useState<TipoCanto | null>(null);
   const [quienDebeResponder, setQuienDebeResponder] = useState<'jugador' | 'cpu' | null>(null);
+  const [trucoEnPausaPorEnvido, setTrucoEnPausaPorEnvido] = useState<boolean>(false);
 
   // Turnos y Mensajes
   const [manoActual, setManoActual] = useState<'jugador' | 'cpu'>('jugador');
@@ -71,7 +72,7 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
     ? `truco_partida_pendiente_${usuarioActivo.id}`
     : `truco_partida_pendiente_guest`;
 
-  // 1. Verificar si existe partida realmente guardada (solo si hubo reparto previo)
+  // 1. Verificar si existe partida guardada
   useEffect(() => {
     const dataGuardada = localStorage.getItem(STORAGE_KEY);
     if (dataGuardada) {
@@ -88,7 +89,7 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
     }
   }, [STORAGE_KEY]);
 
-  // 2. Guardar en localStorage únicamente cuando la partida se inició y hay cartas repartidas
+  // 2. Guardar estado en localStorage
   useEffect(() => {
     if (partidaFinalizada || !partidaIniciada || manoJugador.length === 0) {
       return;
@@ -195,7 +196,7 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
     setBazas([{}, {}, {}]);
     setPartidaIniciada(false);
     setManoTerminada(true);
-    setMensajeEstado('Partida abandonada (registrada como derrota). Presiona "Iniciar Partida".');
+    setMensajeEstado('Partida abandonada. Presiona "Iniciar Partida".');
   };
 
   const guardarPartidaEnApi = async (ptsJ: number, ptsC: number) => {
@@ -230,9 +231,10 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
     }
   };
 
+  // REGLA 1: Tope de puntos para no exceder el máximo (30)
   const sumarPuntos = (jugador: 'jugador' | 'cpu', cantidad: number) => {
     if (jugador === 'jugador') {
-      const nuevoPuntaje = puntosJugador + cantidad;
+      const nuevoPuntaje = Math.min(puntosJugador + cantidad, targetPuntos);
       setPuntosJugador(nuevoPuntaje);
       if (nuevoPuntaje >= targetPuntos) {
         setMensajeEstado(`🏆 ¡GANASTE LA PARTIDA! (${nuevoPuntaje} pts)`);
@@ -240,7 +242,7 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
         guardarPartidaEnApi(nuevoPuntaje, puntosCpu);
       }
     } else {
-      const nuevoPuntaje = puntosCpu + cantidad;
+      const nuevoPuntaje = Math.min(puntosCpu + cantidad, targetPuntos);
       setPuntosCpu(nuevoPuntaje);
       if (nuevoPuntaje >= targetPuntos) {
         setMensajeEstado(`💀 La CPU ganó la partida (${nuevoPuntaje} pts).`);
@@ -284,6 +286,7 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
     setCantanteTruco(null);
     setApuestaPendiente(null);
     setQuienDebeResponder(null);
+    setTrucoEnPausaPorEnvido(false);
 
     const siguienteMano = manoActual === 'jugador' ? 'cpu' : 'jugador';
     setManoActual(siguienteMano);
@@ -292,6 +295,7 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
     setMensajeEstado(`Mano repartida. Es mano: ${siguienteMano === 'jugador' ? 'Tú' : 'CPU'}.`);
   };
 
+  // Turno de la CPU
   useEffect(() => {
     if (
       cpuPensando ||
@@ -307,6 +311,28 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
     } else if (turnoActual === 'cpu' && !quienDebeResponder && manoCpu.length > 0) {
       const bazaActual = bazas[bazaActualIdx];
       if (!bazaActual?.cpu) {
+        const rand = Math.random();
+
+        // CPU canta Envido si es 1a baza, no se resolvió, no jugó su carta y NO hay Truco aceptado
+        if (
+          bazaActualIdx === 0 &&
+          !envidoResuelto &&
+          estadoEnvido === 'NADIE' &&
+          manoCpu.length === 3 &&
+          ptsTrucoEnJuego === 1
+        ) {
+          if (envidoCpu >= 28 || (envidoCpu >= 24 && rand < 0.6)) {
+            ejecutarCantoCpu(envidoCpu >= 30 && rand < 0.4 ? 'REAL_ENVIDO' : 'ENVIDO');
+            return;
+          }
+        }
+
+        // Canto de Truco por la CPU
+        if (estadoTruco === 'NADIE' && cantanteTruco !== 'cpu' && rand < 0.3) {
+          ejecutarCantoCpu('TRUCO');
+          return;
+        }
+
         ejecutarTurnoCpu(manoCpu, bazas, bazaActualIdx);
       }
     }
@@ -321,47 +347,108 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
     partidaIniciada,
   ]);
 
+  const ejecutarCantoCpu = (canto: TipoCanto) => {
+    setCpuPensando(true);
+    setTimeout(() => {
+      setCpuPensando(false);
+
+      if (
+        canto === 'ENVIDO' ||
+        canto === 'ENVIDO_ENVIDO' ||
+        canto === 'REAL_ENVIDO' ||
+        canto === 'FALTA_ENVIDO'
+      ) {
+        const res = procesarCantoEnvido(
+          estadoEnvido,
+          canto as any,
+          puntosCpu,
+          puntosJugador,
+          targetPuntos
+        );
+        setEstadoEnvido(res.nuevoEstado);
+        setPtsEnvidoEnJuego(res.enJuego);
+        setPtsEnvidoRechazo(res.rechazo);
+        setApuestaPendiente(canto);
+        setQuienDebeResponder('jugador');
+        const msj = canto === 'ENVIDO_ENVIDO' ? 'ENVIDO ENVIDO' : canto.replace('_', ' ');
+        setMensajeEstado(`🤖 CPU canta ${msj}. ¿Qué respondes?`);
+      } else if (canto === 'TRUCO' || canto === 'RETRUCO' || canto === 'VALE_CUATRO') {
+        setEstadoTruco(canto as EstadoCantoTruco);
+        setCantanteTruco('cpu');
+        setApuestaPendiente(canto);
+        setQuienDebeResponder('jugador');
+        setMensajeEstado(`🤖 CPU canta ${canto}. ¿Aceptas?`);
+      }
+    }, 1200);
+  };
+
   const responderCpuApuesta = () => {
     setCpuPensando(true);
     setTimeout(() => {
       setCpuPensando(false);
 
-      const acepta = Math.random() > 0.25;
-
       if (
         apuestaPendiente === 'ENVIDO' ||
+        apuestaPendiente === 'ENVIDO_ENVIDO' ||
         apuestaPendiente === 'REAL_ENVIDO' ||
         apuestaPendiente === 'FALTA_ENVIDO'
       ) {
         setEnvidosQueridos((v) => v + 1);
 
+        if (envidoCpu >= 27 && estadoEnvido === 'ENVIDO') {
+          ejecutarCantoCpu('ENVIDO_ENVIDO');
+          return;
+        } else if (envidoCpu >= 29 && (estadoEnvido === 'ENVIDO' || estadoEnvido === 'ENVIDO_ENVIDO')) {
+          ejecutarCantoCpu('REAL_ENVIDO');
+          return;
+        } else if (envidoCpu >= 31 && estadoEnvido !== 'FALTA_ENVIDO') {
+          ejecutarCantoCpu('FALTA_ENVIDO');
+          return;
+        }
+
+        const acepta = envidoCpu >= 23 || Math.random() < 0.3;
+
         if (acepta) {
           setEnvidoResuelto(true);
-          setApuestaPendiente(null);
-          setQuienDebeResponder(null);
-
+          let msjEnvido = ``;
           if (
             envidoJugador > envidoCpu ||
             (envidoJugador === envidoCpu && manoActual === 'jugador')
           ) {
             setEnvidosGanados((v) => v + 1);
-            setMensajeEstado(
-              `🎉 Ganaste el Envido (+${ptsEnvidoEnJuego} pts). Tu ${envidoJugador} le gana a ${envidoCpu}.`
-            );
+            msjEnvido = `🎉 Ganaste el Envido (+${ptsEnvidoEnJuego} pts). Tu ${envidoJugador} le gana a${envidoCpu}.`;
             sumarPuntos('jugador', ptsEnvidoEnJuego);
           } else {
-            setMensajeEstado(
-              `🤖 CPU gana el Envido (+${ptsEnvidoEnJuego} pts). Su ${envidoCpu} le gana a tu ${envidoJugador}.`
-            );
+            msjEnvido = `🤖 CPU gana el Envido (+${ptsEnvidoEnJuego} pts). Su ${envidoCpu} le gana a tu${envidoJugador}.`;
             sumarPuntos('cpu', ptsEnvidoEnJuego);
           }
+
+          if (trucoEnPausaPorEnvido) {
+            setApuestaPendiente('TRUCO');
+            setQuienDebeResponder('cpu');
+            setTrucoEnPausaPorEnvido(false);
+            setMensajeEstado(`${msjEnvido} Ahora respondo a tu TRUCO...`);
+          } else {
+            setApuestaPendiente(null);
+            setQuienDebeResponder(null);
+            setMensajeEstado(msjEnvido);
+          }
         } else {
-          setMensajeEstado(`🤖 CPU dice: "No Quiero". (+${ptsEnvidoRechazo} pt para ti).`);
+          let msjEnvido = `🤖 CPU dice: "No Quiero". (+${ptsEnvidoRechazo} pt para ti).`;
           setEnvidosGanados((v) => v + 1);
           sumarPuntos('jugador', ptsEnvidoRechazo);
           setEnvidoResuelto(true);
-          setApuestaPendiente(null);
-          setQuienDebeResponder(null);
+
+          if (trucoEnPausaPorEnvido) {
+            setApuestaPendiente('TRUCO');
+            setQuienDebeResponder('cpu');
+            setTrucoEnPausaPorEnvido(false);
+            setMensajeEstado(`${msjEnvido} Ahora respondo a tu TRUCO...`);
+          } else {
+            setApuestaPendiente(null);
+            setQuienDebeResponder(null);
+            setMensajeEstado(msjEnvido);
+          }
         }
       } else if (
         apuestaPendiente === 'TRUCO' ||
@@ -369,6 +456,17 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
         apuestaPendiente === 'VALE_CUATRO'
       ) {
         setTrucosQueridos((v) => v + 1);
+
+        const rand = Math.random();
+        if (rand < 0.25 && apuestaPendiente === 'TRUCO') {
+          ejecutarCantoCpu('RETRUCO');
+          return;
+        } else if (rand < 0.2 && apuestaPendiente === 'RETRUCO') {
+          ejecutarCantoCpu('VALE_CUATRO');
+          return;
+        }
+
+        const acepta = rand > 0.3;
 
         if (acepta) {
           setMensajeEstado(`🤖 CPU dice: "¡Quiero!" al ${apuestaPendiente}.`);
@@ -391,13 +489,112 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
     }, 1300);
   };
 
+  const cantarEnvidoSobreTruco = (canto: TipoCanto) => {
+    setTrucoEnPausaPorEnvido(true);
+    const res = procesarCantoEnvido(
+      estadoEnvido,
+      canto as any,
+      puntosJugador,
+      puntosCpu,
+      targetPuntos
+    );
+    setEstadoEnvido(res.nuevoEstado);
+    setPtsEnvidoEnJuego(res.enJuego);
+    setPtsEnvidoRechazo(res.rechazo);
+    setApuestaPendiente(canto);
+    setQuienDebeResponder('cpu');
+    const msj = canto === 'ENVIDO_ENVIDO' ? 'ENVIDO ENVIDO' : canto.replace('_', ' ');
+    setMensajeEstado(`¡El Envido está primero! Cantaste ${msj}. Esperando respuesta de la CPU...`);
+  };
+
+  const responderJugador = (quiere: boolean, subirApuesta?: TipoCanto) => {
+    if (quienDebeResponder !== 'jugador' || !apuestaPendiente) return;
+
+    if (subirApuesta) {
+      cantarJugador(subirApuesta);
+      return;
+    }
+
+    if (
+      apuestaPendiente === 'ENVIDO' ||
+      apuestaPendiente === 'ENVIDO_ENVIDO' ||
+      apuestaPendiente === 'REAL_ENVIDO' ||
+      apuestaPendiente === 'FALTA_ENVIDO'
+    ) {
+      if (quiere) {
+        setEnvidoResuelto(true);
+        let msj = ``;
+        if (
+          envidoJugador > envidoCpu ||
+          (envidoJugador === envidoCpu && manoActual === 'jugador')
+        ) {
+          msj = `🎉 Ganaste el Envido (+${ptsEnvidoEnJuego} pts). Tu ${envidoJugador} le gana a ${envidoCpu}.`;
+          sumarPuntos('jugador', ptsEnvidoEnJuego);
+        } else {
+          msj = `🤖 CPU gana el Envido (+${ptsEnvidoEnJuego} pts). Su ${envidoCpu} le gana a tu ${envidoJugador}.`;
+          sumarPuntos('cpu', ptsEnvidoEnJuego);
+        }
+
+        if (trucoEnPausaPorEnvido) {
+          setApuestaPendiente('TRUCO');
+          setQuienDebeResponder('jugador');
+          setTrucoEnPausaPorEnvido(false);
+          setMensajeEstado(`${msj} Ahora debes responder al TRUCO pendiente de la CPU.`);
+        } else {
+          setApuestaPendiente(null);
+          setQuienDebeResponder(null);
+          setMensajeEstado(msj);
+        }
+      } else {
+        let msj = `Dijiste: "No Quiero". (+${ptsEnvidoRechazo} pt para la CPU).`;
+        sumarPuntos('cpu', ptsEnvidoRechazo);
+        setEnvidoResuelto(true);
+
+        if (trucoEnPausaPorEnvido) {
+          setApuestaPendiente('TRUCO');
+          setQuienDebeResponder('jugador');
+          setTrucoEnPausaPorEnvido(false);
+          setMensajeEstado(`${msj} Ahora debes responder al TRUCO pendiente de la CPU.`);
+        } else {
+          setApuestaPendiente(null);
+          setQuienDebeResponder(null);
+          setMensajeEstado(msj);
+        }
+      }
+    } else if (
+      apuestaPendiente === 'TRUCO' ||
+      apuestaPendiente === 'RETRUCO' ||
+      apuestaPendiente === 'VALE_CUATRO'
+    ) {
+      if (quiere) {
+        setMensajeEstado(`Dijiste "¡Quiero!" al ${apuestaPendiente}.`);
+        setPtsTrucoEnJuego(
+          apuestaPendiente === 'TRUCO' ? 2 : apuestaPendiente === 'RETRUCO' ? 3 : 4
+        );
+        setApuestaPendiente(null);
+        setQuienDebeResponder(null);
+      } else {
+        setMensajeEstado(`Dijiste "No Quiero". La CPU gana la mano (+${ptsTrucoEnJuego} pt).`);
+        sumarPuntos('cpu', ptsTrucoEnJuego);
+        setManoTerminada(true);
+        setApuestaPendiente(null);
+        setQuienDebeResponder(null);
+      }
+    }
+  };
+
   const cantarJugador = (canto: TipoCanto) => {
     if (cpuPensando || manoTerminada || partidaFinalizada || partidaGuardadaDetectada) return;
 
-    if (canto === 'ENVIDO' || canto === 'REAL_ENVIDO' || canto === 'FALTA_ENVIDO') {
+    if (
+      canto === 'ENVIDO' ||
+      canto === 'ENVIDO_ENVIDO' ||
+      canto === 'REAL_ENVIDO' ||
+      canto === 'FALTA_ENVIDO'
+    ) {
       const res = procesarCantoEnvido(
         estadoEnvido,
-        canto,
+        canto as any,
         puntosJugador,
         puntosCpu,
         targetPuntos
@@ -407,25 +604,14 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
       setPtsEnvidoRechazo(res.rechazo);
       setApuestaPendiente(canto);
       setQuienDebeResponder('cpu');
-      setMensajeEstado(`Cantaste ${canto}. Esperando respuesta de la CPU...`);
-    } else if (canto === 'TRUCO') {
-      setEstadoTruco('TRUCO');
+      const msj = canto === 'ENVIDO_ENVIDO' ? 'ENVIDO ENVIDO' : canto.replace('_', ' ');
+      setMensajeEstado(`Cantaste ${msj}. Esperando respuesta de la CPU...`);
+    } else if (canto === 'TRUCO' || canto === 'RETRUCO' || canto === 'VALE_CUATRO') {
+      setEstadoTruco(canto as EstadoCantoTruco);
       setCantanteTruco('jugador');
-      setApuestaPendiente('TRUCO');
+      setApuestaPendiente(canto);
       setQuienDebeResponder('cpu');
-      setMensajeEstado('Cantaste TRUCO! Esperando respuesta de la CPU...');
-    } else if (canto === 'RETRUCO') {
-      setEstadoTruco('RETRUCO');
-      setCantanteTruco('jugador');
-      setApuestaPendiente('RETRUCO');
-      setQuienDebeResponder('cpu');
-      setMensajeEstado('Cantaste RETRUCO! Esperando respuesta...');
-    } else if (canto === 'VALE_CUATRO') {
-      setEstadoTruco('VALE_CUATRO');
-      setCantanteTruco('jugador');
-      setApuestaPendiente('VALE_CUATRO');
-      setQuienDebeResponder('cpu');
-      setMensajeEstado('Cantaste VALE CUATRO! Esperando respuesta...');
+      setMensajeEstado(`Cantaste ${canto}! Esperando respuesta de la CPU...`);
     } else if (canto === 'MAZO') {
       setMensajeEstado(`Te fuiste al mazo. CPU suma +${ptsTrucoEnJuego} pt.`);
       sumarPuntos('cpu', ptsTrucoEnJuego);
@@ -555,6 +741,15 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
     }
   };
 
+  // REGLA 2: Permitir Envido sobre Truco solo si no se jugo carta Y si el Truco todavía NO fue querido (ptsTrucoEnJuego === 1)
+  const permiteEnvidoSobreTruco =
+    apuestaPendiente === 'TRUCO' &&
+    bazaActualIdx === 0 &&
+    !envidoResuelto &&
+    manoJugador.length === 3 &&
+    ptsTrucoEnJuego === 1 &&
+    (estadoEnvido === 'NADIE' || estadoEnvido === 'ENVIDO' || estadoEnvido === 'ENVIDO_ENVIDO');
+
   return (
     <div className="max-w-md mx-auto p-4 bg-slate-900 min-h-screen text-slate-100 flex flex-col justify-between select-none relative">
       {partidaGuardadaDetectada && (
@@ -678,67 +873,179 @@ export const MesaJuego: React.FC<Props> = ({ usuarioActivo, onUsuarioActualizado
           ))}
         </div>
 
-        {/* Botonera Dinámica de Cantos */}
-        <div className="grid grid-cols-3 gap-2">
-          <button
-            onClick={() => cantarJugador('ENVIDO')}
-            disabled={
-              bazaActualIdx > 0 ||
-              envidoResuelto ||
-              cpuPensando ||
-              manoTerminada ||
-              quienDebeResponder !== null ||
-              partidaFinalizada ||
-              partidaGuardadaDetectada ||
-              !partidaIniciada
-            }
-            className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
-          >
-            Envido
-          </button>
+        {/* Panel de Respuesta cuando la CPU canta */}
+        {quienDebeResponder === 'jugador' && apuestaPendiente ? (
+          <div className="bg-slate-800 p-2.5 rounded-xl border-2 border-amber-500 mb-2">
+            <p className="text-xs text-center font-bold text-amber-300 mb-2">
+              🤖 CPU cantó {apuestaPendiente.replace('_', ' ')}. ¿Qué respondes?
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => responderJugador(true)}
+                className="bg-emerald-600 hover:bg-emerald-500 font-bold py-2 rounded-lg text-xs"
+              >
+                ¡Quiero!
+              </button>
 
-          <button
-            onClick={() =>
-              cantarJugador(
-                estadoTruco === 'NADIE'
-                  ? 'TRUCO'
-                  : estadoTruco === 'TRUCO'
-                  ? 'RETRUCO'
-                  : 'VALE_CUATRO'
-              )
-            }
-            disabled={
-              cpuPensando ||
-              manoTerminada ||
-              cantanteTruco === 'jugador' ||
-              quienDebeResponder !== null ||
-              partidaFinalizada ||
-              partidaGuardadaDetectada ||
-              !partidaIniciada
-            }
-            className="bg-amber-600 hover:bg-amber-500 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
-          >
-            {estadoTruco === 'NADIE'
-              ? 'Truco'
-              : estadoTruco === 'TRUCO'
-              ? 'Retruco'
-              : 'Vale Cuatro'}
-          </button>
+              <button
+                onClick={() => responderJugador(false)}
+                className="bg-rose-700 hover:bg-rose-600 font-bold py-2 rounded-lg text-xs"
+              >
+                No Quiero
+              </button>
 
-          <button
-            onClick={() => cantarJugador('MAZO')}
-            disabled={
-              cpuPensando ||
-              manoTerminada ||
-              partidaFinalizada ||
-              partidaGuardadaDetectada ||
-              !partidaIniciada
-            }
-            className="bg-rose-700 hover:bg-rose-600 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
-          >
-            Mazo
-          </button>
-        </div>
+              {/* REGLA 2: Opciones de Envido solo si no jugó carta Y el Truco no fue arreglado aún */}
+              {permiteEnvidoSobreTruco && (
+                <>
+                  <button
+                    onClick={() => cantarEnvidoSobreTruco('ENVIDO')}
+                    className="col-span-2 bg-indigo-600 hover:bg-indigo-500 font-bold py-2 rounded-lg text-xs"
+                  >
+                    Envido
+                  </button>
+                  <button
+                    onClick={() => cantarEnvidoSobreTruco('REAL_ENVIDO')}
+                    className="col-span-2 bg-indigo-700 hover:bg-indigo-600 font-bold py-2 rounded-lg text-xs"
+                  >
+                    Real Envido
+                  </button>
+                  <button
+                    onClick={() => cantarEnvidoSobreTruco('FALTA_ENVIDO')}
+                    className="col-span-2 bg-purple-700 hover:bg-purple-600 font-bold py-2 rounded-lg text-xs"
+                  >
+                    Falta Envido
+                  </button>
+                </>
+              )}
+
+              {/* REGLA 3: Sin texto adicional estilo (+4) */}
+              {apuestaPendiente === 'ENVIDO' && estadoEnvido === 'ENVIDO' && (
+                <button
+                  onClick={() => responderJugador(true, 'ENVIDO_ENVIDO')}
+                  className="col-span-2 bg-indigo-600 hover:bg-indigo-500 font-bold py-2 rounded-lg text-xs"
+                >
+                  Envido Envido
+                </button>
+              )}
+              {(apuestaPendiente === 'ENVIDO' || apuestaPendiente === 'ENVIDO_ENVIDO') && (
+                <button
+                  onClick={() => responderJugador(true, 'REAL_ENVIDO')}
+                  className="col-span-2 bg-indigo-600 hover:bg-indigo-500 font-bold py-2 rounded-lg text-xs"
+                >
+                  Real Envido
+                </button>
+              )}
+              {(apuestaPendiente === 'ENVIDO' ||
+                apuestaPendiente === 'ENVIDO_ENVIDO' ||
+                apuestaPendiente === 'REAL_ENVIDO') && (
+                <button
+                  onClick={() => responderJugador(true, 'FALTA_ENVIDO')}
+                  className="col-span-2 bg-purple-700 hover:bg-purple-600 font-bold py-2 rounded-lg text-xs"
+                >
+                  Falta Envido
+                </button>
+              )}
+
+              {/* Opciones progresivas para redoblar Truco */}
+              {apuestaPendiente === 'TRUCO' && (
+                <button
+                  onClick={() => responderJugador(true, 'RETRUCO')}
+                  className="col-span-2 bg-amber-600 hover:bg-amber-500 font-bold py-2 rounded-lg text-xs"
+                >
+                  Retruco
+                </button>
+              )}
+              {apuestaPendiente === 'RETRUCO' && (
+                <button
+                  onClick={() => responderJugador(true, 'VALE_CUATRO')}
+                  className="col-span-2 bg-amber-600 hover:bg-amber-500 font-bold py-2 rounded-lg text-xs"
+                >
+                  Vale Cuatro
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* Botonera Dinámica habitual */
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={() =>
+                cantarJugador(
+                  estadoEnvido === 'NADIE'
+                    ? 'ENVIDO'
+                    : estadoEnvido === 'ENVIDO'
+                    ? 'ENVIDO_ENVIDO'
+                    : estadoEnvido === 'ENVIDO_ENVIDO'
+                    ? 'REAL_ENVIDO'
+                    : 'FALTA_ENVIDO'
+                )
+              }
+              disabled={
+                bazaActualIdx > 0 ||
+                envidoResuelto ||
+                cpuPensando ||
+                manoTerminada ||
+                quienDebeResponder !== null ||
+                manoJugador.length < 3 || // No se puede cantar si ya tiro carta
+                ptsTrucoEnJuego > 1 || // No se puede cantar si el truco ya esta querido
+                partidaFinalizada ||
+                partidaGuardadaDetectada ||
+                !partidaIniciada
+              }
+              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
+            >
+              {estadoEnvido === 'NADIE'
+                ? 'Envido'
+                : estadoEnvido === 'ENVIDO'
+                ? 'Envido Envido'
+                : estadoEnvido === 'ENVIDO_ENVIDO'
+                ? 'Real Envido'
+                : 'Falta Envido'}
+            </button>
+
+            <button
+              onClick={() =>
+                cantarJugador(
+                  estadoTruco === 'NADIE'
+                    ? 'TRUCO'
+                    : estadoTruco === 'TRUCO'
+                    ? 'RETRUCO'
+                    : 'VALE_CUATRO'
+                )
+              }
+              disabled={
+                cpuPensando ||
+                manoTerminada ||
+                cantanteTruco === 'jugador' ||
+                quienDebeResponder !== null ||
+                partidaFinalizada ||
+                partidaGuardadaDetectada ||
+                !partidaIniciada
+              }
+              className="bg-amber-600 hover:bg-amber-500 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
+            >
+              {estadoTruco === 'NADIE'
+                ? 'Truco'
+                : estadoTruco === 'TRUCO'
+                ? 'Retruco'
+                : 'Vale Cuatro'}
+            </button>
+
+            <button
+              onClick={() => cantarJugador('MAZO')}
+              disabled={
+                cpuPensando ||
+                manoTerminada ||
+                partidaFinalizada ||
+                partidaGuardadaDetectada ||
+                !partidaIniciada
+              }
+              className="bg-rose-700 hover:bg-rose-600 disabled:opacity-30 font-bold py-2 rounded-lg text-xs transition-all active:scale-95"
+            >
+              Mazo
+            </button>
+          </div>
+        )}
 
         {/* Botón de Iniciar / Repartir */}
         <div className="mt-2">
